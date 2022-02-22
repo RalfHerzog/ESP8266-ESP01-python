@@ -3,9 +3,7 @@
   <component name="RemoteMappingsManager">
     <list>
       <list>
-        <remote-mappings server-id="python@1e14c042-3bde-4cc4-9136-2fd375dbd916" />
-        <remote-mappings server-id="python@sshConfig://ralf@rpi:22 key/usr/bin/python3" />
-        <remote-mappings server-id="python@sshConfig://ralf@rpi:22 key/usr/bin/python" />
+        <remote-mappings server-id="python@f266b4bd-7589-4b65-933f-b9fa2e6e9a96" />
       </list>
     </list>
   </component>

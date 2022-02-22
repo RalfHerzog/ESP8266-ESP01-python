@@ -1,4 +1,2 @@
-pip~=21.1
-wheel~=0.32.3
-setuptools~=56.2
 pyserial~=3.5
+paho-mqtt~=1.6.1
