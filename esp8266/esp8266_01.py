@@ -362,7 +362,7 @@ class Esp8266(serial.Serial):
         d['data'] = data
         return d
 
-    def close(self, ipd: Optional[int] = None):
+    def ip_close(self, ipd: Optional[int] = None):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CIPCLOSE
         if ipd is not None:
             return self.__success(self.execute(f'AT+CIPCLOSE={ipd}'))
@@ -581,7 +581,7 @@ class Esp8266(serial.Serial):
                 response = self.process(data)
 
                 esp.send(response, ipd)
-                esp.close(ipd)
+                esp.ip_close(ipd)
 
         def process(self, data: bytearray):
             raise NotImplementedError('Must be implemented by sub-class')
@@ -594,100 +594,58 @@ class Esp8266(serial.Serial):
             request = data.decode('ASCII')
 
             # Header not passed be callback function
-            payload = "This is an answer!"
-            frame = "HTTP/1.1 200 OK\r\n" \
+            payload = "This is a reply!"
+            frame = "HTTP/1.0 200 OK\r\n" \
                     "Server: Pi\r\n" \
                     f"Content-Length: {len(payload)}\r\n" \
                     "\r\n" + payload
             return frame
 
 
-# x = threading.Thread(target=lambda: {
-#     print("Thread")
-# })
-# x.start()
+if __name__ == "__main__":
+    # esp8266 = Esp8266.rpi()
+    esp8266 = Esp8266.usb()
 
-time.sleep(1)
+    # print(esp8266.mode())
+    # print(esp8266.list_aps())
+    # print(esp8266.list_aps("BND"))
+    # print(esp8266.join())
+    # print(esp8266.quit())
+    # print(esp8266.soft_ap())
+    # print(esp8266.list_clients())
+    # print(esp8266.dhcp(Esp8266.WifiDHCP.STATION, True))
+    # print(esp8266.station_mac())
+    # print(esp8266.station_mac("58:bf:25:dc:79:2f"))
+    # print(esp8266.soft_ap_mac())
+    # print(esp8266.soft_ap_mac("58:bf:25:dc:79:2f"))
+    # print(esp8266.station_ip())
+    # print(esp8266.station_ip("172.16.9.198"))
+    # print(esp8266.soft_ap_ip())
+    # print(esp8266.soft_ap_ip("172.16.9.198"))
+    # print(esp8266.status())
+    # print(esp8266.connect())
+    # print(esp8266.send())
+    # print(esp8266.connect(Esp8266.Type.TCP, "api.ipify.org", 80))
+    # query = f'GET / HTTP/1.1\r\nHost: api.ipify.org\r\n\r\n'
+    # print(esp8266.send(query))
+    # print(esp8266.receive())
+    # print(esp8266.ip_close())
+    # print(esp8266.ip())
+    # print(esp8266.multiplex())
+    # print(esp8266.multiplex(Esp8266.WifiMultiplex.SINGLE))
+    # print(esp8266.server(Esp8266.ServerMode.CREATE))
+    # print(esp8266.server(Esp8266.ServerMode.DELETE))
+    # print(esp8266.transfer_mode())
+    # print(esp8266.transfer_mode(Esp8266.TransferMode.NORMAL))
+    # print(esp8266.server_timeout())
+    # print(esp8266.server_timeout(180))
+    # print(esp8266.reset())
+    # print(esp8266.attention())
+    # print(esp8266.version())
+    # print(esp8266.mode(Esp8266.WifiMode.CLIENT))
+    # print(esp8266.join())
+    # print(esp8266.join('IoT', 'bb22f1a57e6a84e0b82d9e58670410f2'))
 
-#
-#   Hello World client in Python
-#   Connects REQ socket to tcp://localhost:5555
-#   Sends "Hello" to server, expects "World" back
-#
+    print(esp8266.serve(Esp8266.DummyHTTP(port=80)))
 
-# import zmq
-#
-# context = zmq.Context()
-#
-# #  Socket to talk to server
-# print("Connecting to hello world server…")
-# socket = context.socket(zmq.REQ)
-# socket.connect("inproc://somename")
-#
-# #  Do 10 requests, waiting each time for a response
-# for request in range(10):
-#     print("Sending request %s …" % request)
-#     socket.send(b"Hello")
-#
-#     #  Get the reply.
-#     message = socket.recv()
-#     print("Received reply %s [ %s ]" % (request, message))
-
-# esp8266 = Esp8266.rpi()
-esp8266 = Esp8266.usb()
-
-
-# print(esp8266.mode())
-# print(esp8266.list_aps())
-# print(esp8266.list_aps("BND"))
-# print(esp8266.join())
-# print(esp8266.quit())
-# print(esp8266.soft_ap())
-# print(esp8266.list_clients())
-# print(esp8266.dhcp(Esp8266.WifiDHCP.STATION, True))
-# print(esp8266.station_mac())
-# print(esp8266.station_mac("58:bf:25:dc:79:2f"))
-# print(esp8266.soft_ap_mac())
-# print(esp8266.soft_ap_mac("58:bf:25:dc:79:2f"))
-# print(esp8266.station_ip())
-# print(esp8266.station_ip("172.16.9.198"))
-# print(esp8266.soft_ap_ip())
-# print(esp8266.soft_ap_ip("172.16.9.198"))
-# print(esp8266.status())
-# print(esp8266.connect())
-# print(esp8266.send())
-# print(esp8266.connect(Esp8266.Type.TCP, "api.ipify.org", 80))
-# query = f'GET / HTTP/1.1\r\nHost: api.ipify.org\r\n\r\n'
-# print(esp8266.send(query))
-# print(esp8266.receive())
-# print(esp8266.close())
-# print(esp8266.ip())
-# print(esp8266.multiplex())
-# print(esp8266.multiplex(Esp8266.WifiMultiplex.SINGLE))
-# print(esp8266.server(Esp8266.ServerMode.CREATE))
-# print(esp8266.server(Esp8266.ServerMode.DELETE))
-# print(esp8266.transfer_mode())
-# print(esp8266.transfer_mode(Esp8266.TransferMode.NORMAL))
-# print(esp8266.server_timeout())
-# print(esp8266.server_timeout(180))
-
-
-# print(esp8266.reset())
-
-# print(esp8266.attention())
-# print(esp8266.version())
-# esp8266.mode(Esp8266.WifiMode.CLIENT)
-# esp8266.join('IoT', 'bb22f1a57e6a84e0b82d9e58670410f2')
-# print(esp8266.get_ip())
-# print(esp8266.get_mac())
-# print(esp8266.multiplex(Esp8266.WifiMultiplex.MULTIPLE))
-
-
-def http_handle(request_lines):
-    content = "This is an answer!"
-    return content
-
-
-print(esp8266.serve(Esp8266.DummyHTTP(port=80)))
-
-# print(esp8266.http_server(port=80, callback=http_handle))
+    # print(esp8266.http_server(port=80, callback=http_handle))
