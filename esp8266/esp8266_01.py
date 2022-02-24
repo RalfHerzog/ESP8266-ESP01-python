@@ -1,84 +1,103 @@
-#!/usr/bin/env python
-
+#!/usr/bin/env python3
+import logging
 import re
-import time
 from enum import Enum
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 import serial
 
 
-class Esp8266(serial.Serial):
-    class WifiMode(Enum):
-        CLIENT = 1
-        ACCESS_POINT = 2
-        BOTH = 3
+class WifiMode(Enum):
+    CLIENT = 1
+    ACCESS_POINT = 2
+    BOTH = 3
 
-    class WifiMultiplex(Enum):
-        SINGLE = 0
-        MULTIPLE = 1
 
-    class WifiEncryption(Enum):
-        OPEN = 0
-        WEP = 1
-        WPA_PSK = 2
-        WPA2_PSK = 3
-        WPA_WPA2_PSK = 4
+class WifiMultiplex(Enum):
+    SINGLE = 0
+    MULTIPLE = 1
 
-    class WifiDHCP(Enum):
-        SOFT_AP = 0
-        STATION = 1
-        BOTH = 2
 
-    class Status(Enum):
-        GOT_IP = 2
-        CONNECTED = 3
-        DISCONNECTED = 4
+class WifiEncryption(Enum):
+    OPEN = 0
+    WEP = 1
+    WPA_PSK = 2
+    WPA2_PSK = 3
+    WPA_WPA2_PSK = 4
 
-    class Type(Enum):
-        TCP = 'TCP'
-        UDP = 'UDP'
 
-    class ServerMode(Enum):
-        DELETE = 0
-        CREATE = 1
+class WifiDHCP(Enum):
+    SOFT_AP = 0
+    STATION = 1
+    BOTH = 2
 
-    class TransferMode(Enum):
-        NORMAL = 0
-        UNVARNISHED = 1
 
+class Status(Enum):
+    GOT_IP = 2
+    CONNECTED = 3
+    DISCONNECTED = 4
+
+
+class Type(Enum):
+    TCP = 'TCP'
+    UDP = 'UDP'
+
+
+class ServerMode(Enum):
+    DELETE = 0
+    CREATE = 1
+    QUERY = 2
+
+
+class TransferMode(Enum):
+    NORMAL = 0
+    UNVARNISHED = 1
+
+
+class WifiAP:
+    def __init__(self, encryption: WifiEncryption, rssi: int, channel: int, *kwargs):
+        self.encryption = encryption
+        self.rssi = rssi
+        self.channel = channel
+        self.unknown = kwargs
+
+
+class Esp8266:
     @staticmethod
-    def rpi():
+    def rpi(log_level=logging.INFO):
         esp = Esp8266(
             port='/dev/serial0',
             baudrate=115200,
             timeout=1,
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
-            bytesize=serial.EIGHTBITS
+            bytesize=serial.EIGHTBITS,
+            log_level=log_level
         )
         esp.__clear_buffer()
         return esp
 
     @staticmethod
-    def usb():
+    def usb(log_level=logging.DEBUG):
         esp = Esp8266(
             port='/dev/ttyUSB0',
             baudrate=115200,
             timeout=1,
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
-            bytesize=serial.EIGHTBITS
+            bytesize=serial.EIGHTBITS,
+            log_level=log_level
         )
         esp.__clear_buffer()
         return esp
 
-    def __init__(self, verbose=True, **kwargs):
-        super().__init__(**kwargs)
-        self.verbose = verbose
+    def __init__(self, log_level=logging.INFO, **kwargs):
+        self.__serial = serial.Serial(**kwargs)
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.level = log_level
 
-        super().close()
-        super().open()
+        self.__serial.close()
+        self.__serial.open()
 
     def attention(self):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT
@@ -86,22 +105,24 @@ class Esp8266(serial.Serial):
 
     def reset(self):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+RST
-        success = self.__success(self.execute('AT+RST', expect='ready\r\n'))
+        success = self.__success(self.execute('AT+RST', expect='ready\r\n'), custom_end='ready')
         # Dummy read. Sometimes there is more data sent
         self.execute('')
         return success
 
-    def version(self):
+    def version(self) -> Union[bool, Dict[str, Any]]:
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+GMR
         response = self.execute('AT+GMR')
-        versions = {}
-        for line in response:
-            if line.startswith('AT version:'):
-                versions['AT'] = line[len('AT version:'):]
-            elif line.startswith('SDK version:'):
-                versions['SDK'] = line[len('SDK version:'):]
-            else:
-                raise RuntimeError(f'Unhandled line "{line}"')
+        if not self.__success(response):
+            return False
+
+        lines = self.__filter_lines('AT+GMR', response)
+        versions = {
+            'AT': lines[0][len('AT version:'):],
+            'SDK': lines[1][len('SDK version:'):],
+            'version': lines[2],
+            'date': lines[3]
+        }
         return versions
 
     def deep_sleep(self, milliseconds: int):
@@ -115,18 +136,18 @@ class Esp8266(serial.Serial):
         else:
             return self.__success(self.execute(f'AT+ATE1'))
 
-    def mode(self, mode: Optional[WifiMode] = None):
+    def mode(self, mode: Optional[WifiMode] = None) -> Union[bool, List[WifiMode]]:
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CWMODE
         if mode:
-            if mode not in Esp8266.WifiMode:
+            if mode not in WifiMode:
                 raise RuntimeError(f'Unsupported wifi mode "{str(mode)}"')
             return self.__success(self.execute(f'AT+CWMODE={str(mode)}'))
         else:
             response = self.execute(f'AT+CWMODE?', payload_only=True)
-            modes: List[Esp8266.WifiMode] = []
+            modes: List[WifiMode] = []
             for line in response:
                 if line.startswith('+CWMODE:'):
-                    modes.append(Esp8266.WifiMode(int(line[len('+CWMODE:'):])))
+                    modes.append(WifiMode(int(line[len('+CWMODE:'):])))
                 else:
                     raise RuntimeError(f'Unhandled line "{line}"')
             return modes
@@ -149,31 +170,35 @@ class Esp8266(serial.Serial):
                     match = re.search(regex, line)
                     return match.groupdict()
 
-    def list_aps(self, ssid: Optional[str] = None, mac: Optional[str] = None, channel: Optional[int] = None):
+    def list_aps(self, ssid: Optional[str] = None, mac: Optional[str] = None, channel: Optional[int] = None) -> \
+            Union[bool, List[WifiAP]]:
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CWLAP
         if ssid:
             # Filter list
             response = self.execute(f'AT+CWLAP="{ssid}","{mac if channel else ""}",{channel if channel else 0}')
         else:
             response = self.execute(f'AT+CWLAP')
-
         if not self.__success(response):
             return False
-        for line in response:
+
+        aps = []
+        for line in self.__filter_lines('+CWLAP', response, payload_only=True):
             if line.startswith('+CWLAP:'):
-                regex = r"\+CWLAP:\((?P<encryption>\d),\"(?P<wifi>.+)\",(?P<rssi>-?\d+),\"(?P<mac>[a-z0-9]{2}(:?[a-z0-9]{2}){5})\",(?P<channel>\d+),(?P<unknown1>-?\d+),(?P<unknown2>\d+)\)"
+                regex = r"\+CWLAP:\((?P<encryption>\d),\"(?P<wifi>.+)\",(?P<rssi>-?\d+),\"(?P<mac>[a-z0-9]{2}(:?[a-z0-9]{2}){5})\",(?P<channel>\d+),(?P<unknown1>-?\d+)?,(?P<unknown2>\d+)\)?"
                 match = re.search(regex, line)
                 if match:
-                    d = match.groupdict()
-                    d['encryption'] = Esp8266.WifiEncryption(int(d['encryption']))
-                    d['rssi'] = int(d['rssi'])
-                    d['channel'] = int(d['channel'])
-                    return d
+                    aps.append(WifiAP(
+                        WifiEncryption(int(match.group('encryption'))),
+                        int(match.group('rssi')),
+                        int(match.group('channel')),
+                        match.group('unknown1'),
+                        match.group('unknown2')
+                    ))
                 else:
                     raise RuntimeError(f'Regex mismatch "{line}"')
             else:
                 raise RuntimeError(f'Unexpected response "{line}"')
-        return False
+        return aps
 
     def quit(self):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CWQAP
@@ -195,7 +220,7 @@ class Esp8266(serial.Serial):
                     match = re.search(regex, line)
                     if match:
                         d = match.groupdict()
-                        d['encryption'] = Esp8266.WifiEncryption(int(d['encryption']))
+                        d['encryption'] = WifiEncryption(int(d['encryption']))
                         d['channel'] = int(d['channel'])
                         return d
                 else:
@@ -289,7 +314,7 @@ class Esp8266(serial.Serial):
         response = self.execute(f'AT+CIPSTATUS')
         for line in response:
             if line.startswith('STATUS:'):
-                status = Esp8266.Status(int(line[len('STATUS:'):]))
+                status = Status(int(line[len('STATUS:'):]))
                 return {'status': status}
             else:
                 raise RuntimeError(f'Unexpected response "{line}"')
@@ -320,7 +345,7 @@ class Esp8266(serial.Serial):
                 return True
         return False
 
-    def send(self, data: Optional[str] = None, ipd: Optional[int] = None):
+    def send(self, data: Optional[Union[str, bytes, bytearray]] = None, ipd: Optional[int] = None) -> bool:
         # def send(self, length: Optional[int] = None, i: Optional[int] = None):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CIPSEND
         if data is None and ipd is None:
@@ -332,17 +357,35 @@ class Esp8266(serial.Serial):
             response = self.execute(f'AT+CIPSEND={ipd},{length}')
         if not self.__success(response):
             raise RuntimeError(f'Error setting send data length')
-        if self.verbose:
-            print(f'=> Write {length} bytes ...')
-        self._write(data)
+
+        self.logger.info(f'=> Write {length} bytes ...')
+        if isinstance(data, str):
+            self._write(data)
+        elif isinstance(data, (bytes, bytearray)):
+            self._write_raw(data)
+        else:
+            raise RuntimeError(f'data type {type(data)} cannot be sent')
+
         self.read_lines(check_end_func=Esp8266._check_send)
         return True
 
-    def receive(self, ipd: Optional[int] = None) -> Dict[str, Any]:
+    def receive(self, ipd: Optional[int] = None, timeout: Optional[float] = 5.0) -> Dict[str, Any]:
         if ipd:
-            response = self.read_lines(check_end_func=lambda lines: lines[0].startswith(f'+IPD,{ipd},'))
+            response = self.read_lines(
+                timeout=timeout,
+                check_end_func=lambda lines: lines[0].startswith(f'+IPD,{ipd},')
+            )
         else:
-            response = self.read_lines(check_end_func=lambda lines: lines[0].startswith('+IPD,'))
+            response = self.read_lines(
+                timeout=timeout,
+                check_end_func=lambda lines: lines[0].startswith('+IPD,')
+            )
+        if len(response) == 0:
+            return {
+                'id': None,
+                'length': -1,
+                'data': None
+            }
         line = response[0]
         regex = r'\+IPD,(?P<id>\d+)?,?(?P<length>\d+):'
         match = re.search(regex, line)
@@ -370,6 +413,7 @@ class Esp8266(serial.Serial):
             return self.__success(self.execute(f'AT+CIPCLOSE'))
 
     def ip(self):
+        # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CIFSR
         # +CIFSR:STAIP,"172.16.9.157"
         response = self.execute(f'AT+CIFSR')
         for line in response:
@@ -377,24 +421,30 @@ class Esp8266(serial.Serial):
                 return line[len('+CIFSR:STAIP,"'):-1]
 
     def multiplex(self, mode: Optional[WifiMultiplex] = None):
+        # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CIPMUX
         if mode is None:
             response = self.execute(f'AT+CIPMUX?')
             if not self.__success(response):
                 return False
             multiplex_mode = response[0][len('+CIPMUX:'):]
-            return Esp8266.WifiMultiplex(int(multiplex_mode))
-        if mode not in Esp8266.WifiMultiplex:
+            return WifiMultiplex(int(multiplex_mode))
+        if mode not in WifiMultiplex:
             raise RuntimeError(f'Unsupported multiplex mode {mode}')
         return self.__success(self.execute(f'AT+CIPMUX={mode.value}'))
 
-    def server(self, mode: Optional[ServerMode], port: int = 333):
-        if self.multiplex() is not Esp8266.WifiMultiplex.MULTIPLE:
-            if not self.multiplex(Esp8266.WifiMultiplex.MULTIPLE):
+    def server(self, mode: Optional[ServerMode], port: Optional[int] = 333):
+        # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CIPSERVER
+        if self.multiplex() is not WifiMultiplex.MULTIPLE:
+            if not self.multiplex(WifiMultiplex.MULTIPLE):
                 return False
 
-        if mode is Esp8266.ServerMode.CREATE:
+        if mode is ServerMode.QUERY:
+            return self.__success(self.execute(f'AT+CIPSERVER?'))
+        elif mode is ServerMode.CREATE:
+            if port is None:
+                raise RuntimeError('port needs to be set for server start')
             return self.__success(self.execute(f'AT+CIPSERVER={mode.value},{port}'))
-        elif mode is Esp8266.ServerMode.DELETE:
+        elif mode is ServerMode.DELETE:
             if self.__success(self.execute(f'AT+CIPSERVER={mode.value}')):
                 self.reset()
                 return True
@@ -408,8 +458,8 @@ class Esp8266(serial.Serial):
             if not self.__success(response):
                 return False
             mode = response[0][len('+CIPMODE:'):]
-            return Esp8266.TransferMode(int(mode))
-        if mode not in Esp8266.TransferMode:
+            return TransferMode(int(mode))
+        if mode not in TransferMode:
             raise RuntimeError(f'Unknown transfer mode "{mode}"')
         return self.__success(self.execute(f'AT+CIPMODE={mode.value}'))
 
@@ -424,8 +474,7 @@ class Esp8266(serial.Serial):
         return self.__success(self.execute(f'AT+CIPSTO={seconds}'))
 
     def execute(self, command: str, expect: Optional[str] = None, payload_only=False) -> List[str]:
-        if self.verbose:
-            print(f'=> {command}')
+        self.logger.info(f'=> {command}')
 
         if command != '':
             self._write(command)
@@ -436,42 +485,41 @@ class Esp8266(serial.Serial):
         trimmed_resp_lines = self.__trim_lines(resp_lines)
         filtered_lines = self.__filter_lines(command, trimmed_resp_lines, payload_only=payload_only)
 
-        [print(f'<= {line}') for line in filtered_lines if self.verbose]
+        [self.logger.debug(f'<= {line}') for line in filtered_lines]
 
         return filtered_lines
 
     def _write(self, text):
-        self._write_raw(f"{text}\r\n")
+        self._write_raw(f"{text}\r\n".encode('ASCII'))
 
-    def _write_raw(self, text):
-        super().write(text.encode('ASCII'))
+    def _write_raw(self, data: bytes):
+        self.__serial.write(data)
 
     def read_raw(self, size: int, timeout: float = 5.0):
         self.timeout = timeout
         data = []
         while size > 0:
-            chunk = super().read(size)
+            chunk = self.__serial.read(size)
             if chunk is None:
                 break
             size -= len(chunk)
             data.append(chunk.decode('ASCII'))
         return bytearray(''.join(data).encode('ASCII'))
 
-    def read_lines(self, check_end_func=None, timeout: float = 5.0) -> List[str]:
+    def read_lines(self, check_end_func=None, timeout: float = 5.0, log_timeout=True) -> List[str]:
         lines = []
         while True:
-            self.timeout = timeout
-            line = super().readline()
+            self.__serial.timeout = timeout
+            line = self.__serial.readline()
 
             if len(line) == 0:
-                if self.verbose:
-                    print(f'Timeout waiting for reply')
+                if log_timeout:
+                    self.logger.warning(f'Timeout waiting for reply')
                 break
             try:
                 line_decoded = line.decode()
             except UnicodeDecodeError:
-                if self.verbose:
-                    print(f'Error decode: {line}')
+                self.logger.error(f'Error decode: {line}')
                 continue
             lines.append(line_decoded)
             if check_end_func is None:
@@ -508,21 +556,20 @@ class Esp8266(serial.Serial):
             filtered_lines.append(line)
         return filtered_lines
 
-    @staticmethod
-    def __success(lines):
+    def __success(self, lines, custom_end: Optional[str] = None):
         if len(lines) == 0:
+            self.logger.debug(f'Response validation returned [{False}]')
             return False
-        return lines[len(lines) - 1] == 'OK'
+        success = lines[len(lines) - 1] == 'OK' or (custom_end is not None and lines[len(lines) - 1] == custom_end)
+        self.logger.debug(f'Response validation returned [{success}]')
+        return success
 
     def __clear_buffer(self, timeout: float = 1.0):
-        verbose = self.verbose
-        self.verbose = False
-        self.read_lines(timeout=timeout)
-        self.verbose = verbose
+        self.read_lines(timeout=timeout, log_timeout=False)
 
     def serve(self, server):
-        if not isinstance(server.__class__, Esp8266.__Server.__class__):
-            raise RuntimeError(f'server must be an instance of {Esp8266.__Server.__class__}')
+        if not isinstance(server.__class__, Server.__class__):
+            raise RuntimeError(f'server must be an instance of {Server.__class__}')
         server.listen(self)
 
     @staticmethod
@@ -538,71 +585,91 @@ class Esp8266(serial.Serial):
 
     def accept(self) -> Optional[int]:
         while True:
-            verbose = self.verbose
-            self.verbose = False
-            lines = self.read_lines(timeout=0, check_end_func=self._check_accept)
-            self.verbose = verbose
+            lines = self.read_lines(timeout=0, check_end_func=self._check_accept, log_timeout=False)
 
             if lines:
-                if self.verbose:
-                    [print(f'<= {line}') for line in lines]
+                [self.logger.debug(f'<= {line}') for line in lines]
                 regex = r'^(?P<ipd>\d),(?P<state>CONNECT|CLOSED)\r\n$'
                 first_line = lines[0]
                 match = re.match(regex, first_line)
+                if match is None:
+                    continue
                 if match.group('state') == 'CONNECT':
                     return int(match.group('ipd'))
                 else:
                     return None
 
-    class __Server:
-        def __init__(self, port: int):
-            self.verbose = False
 
-            if not isinstance(port, int):
-                raise RuntimeError(f'server port must be numeric (int)')
+class Server:
+    def __init__(self, port: int, log_level=logging.INFO, receive_timeout=5.0):
+        if not isinstance(port, int):
+            raise RuntimeError(f'server port must be numeric (int)')
 
-            self.__port = port
+        self.__port = port
+        self.__receive_timeout = receive_timeout
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.level = log_level
 
-        def listen(self, esp):
-            if not isinstance(esp, Esp8266):
-                raise RuntimeError(f'esp must be an instance of {Esp8266.__class__} but is {esp.__class__}')
-            esp.server(Esp8266.ServerMode.CREATE, self.__port)
+    def listen(self, esp):
+        if not isinstance(esp, Esp8266):
+            raise RuntimeError(f'esp must be an instance of {Esp8266.__class__} but is {esp.__class__}')
+        esp.server(ServerMode.DELETE)
+        esp.server(ServerMode.CREATE, self.__port)
 
-            while True:
-                ipd = esp.accept()
-                if ipd is None:
-                    continue
-                d = esp.receive()
-                data = d['data']
+        while True:
+            ipd = esp.accept()
+            if ipd is None:
+                continue
 
-                if esp.verbose:
-                    print(f'<= {data.decode("ASCII")}')
+            try:
+                d = esp.receive(timeout=self.__receive_timeout)
+            except RuntimeError:
+                continue
 
-                response = self.process(data)
+            if d['length'] == -1:
+                self.logger.info(f'No data was sent after accepting connection')
+            data = d['data']
 
-                esp.send(response, ipd)
-                esp.ip_close(ipd)
+            if data is not None:
+                self.logger.debug(f'<= {data.decode("ASCII")}')
 
-        def process(self, data: bytearray):
-            raise NotImplementedError('Must be implemented by sub-class')
+            response = self.process(data)
 
-    class DummyHTTP(__Server):
-        def __init__(self, port: int):
-            super(Esp8266.DummyHTTP, self).__init__(port)
+            esp.send(response, ipd)
+            esp.ip_close(ipd)
 
-        def process(self, data: bytearray):
-            request = data.decode('ASCII')
+    def process(self, data: bytearray):
+        raise NotImplementedError('Must be implemented by sub-class')
 
-            # Header not passed be callback function
-            payload = "This is a reply!"
-            frame = "HTTP/1.0 200 OK\r\n" \
-                    "Server: Pi\r\n" \
-                    f"Content-Length: {len(payload)}\r\n" \
-                    "\r\n" + payload
-            return frame
+
+class DummyHTTPServer(Server):
+    def __init__(self, port: int):
+        super(DummyHTTPServer, self).__init__(port)
+
+    def process(self, data: bytearray):
+        request = data.decode('ASCII')
+
+        # Header not passed be callback function
+        payload = "This is a reply!"
+        frame = "HTTP/1.0 200 OK\r\n" \
+                "Server: Pi\r\n" \
+                f"Content-Length: {len(payload)}\r\n" \
+                "\r\n" + payload
+        return frame
+
+
+class DummyTCPServer(Server):
+    def __init__(self, port: int):
+        super(DummyTCPServer, self).__init__(port, receive_timeout=0)
+
+    def process(self, data: bytearray):
+        response = b'\x88\xd2\xc9\x36\x2e\x3c\x1b\x0f\x30\x84'
+        return response
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+
     # esp8266 = Esp8266.rpi()
     esp8266 = Esp8266.usb()
 
@@ -613,7 +680,7 @@ if __name__ == "__main__":
     # print(esp8266.quit())
     # print(esp8266.soft_ap())
     # print(esp8266.list_clients())
-    # print(esp8266.dhcp(Esp8266.WifiDHCP.STATION, True))
+    # print(esp8266.dhcp(WifiDHCP.STATION, True))
     # print(esp8266.station_mac())
     # print(esp8266.station_mac("58:bf:25:dc:79:2f"))
     # print(esp8266.soft_ap_mac())
@@ -625,27 +692,26 @@ if __name__ == "__main__":
     # print(esp8266.status())
     # print(esp8266.connect())
     # print(esp8266.send())
-    # print(esp8266.connect(Esp8266.Type.TCP, "api.ipify.org", 80))
+    # print(esp8266.connect(Type.TCP, "api.ipify.org", 80))
     # query = f'GET / HTTP/1.1\r\nHost: api.ipify.org\r\n\r\n'
     # print(esp8266.send(query))
     # print(esp8266.receive())
     # print(esp8266.ip_close())
     # print(esp8266.ip())
     # print(esp8266.multiplex())
-    # print(esp8266.multiplex(Esp8266.WifiMultiplex.SINGLE))
-    # print(esp8266.server(Esp8266.ServerMode.CREATE))
-    # print(esp8266.server(Esp8266.ServerMode.DELETE))
+    # print(esp8266.multiplex(WifiMultiplex.SINGLE))
+    # print(esp8266.server(ServerMode.CREATE))
+    # print(esp8266.server(ServerMode.DELETE))
     # print(esp8266.transfer_mode())
-    # print(esp8266.transfer_mode(Esp8266.TransferMode.NORMAL))
+    # print(esp8266.transfer_mode(TransferMode.NORMAL))
     # print(esp8266.server_timeout())
     # print(esp8266.server_timeout(180))
     # print(esp8266.reset())
     # print(esp8266.attention())
     # print(esp8266.version())
-    # print(esp8266.mode(Esp8266.WifiMode.CLIENT))
+    # print(esp8266.mode(WifiMode.CLIENT))
     # print(esp8266.join())
     # print(esp8266.join('IoT', 'bb22f1a57e6a84e0b82d9e58670410f2'))
 
-    print(esp8266.serve(Esp8266.DummyHTTP(port=80)))
-
-    # print(esp8266.http_server(port=80, callback=http_handle))
+    print(esp8266.serve(DummyHTTPServer(port=80)))
+    # print(esp8266.serve(DummyTCP(port=333)))
