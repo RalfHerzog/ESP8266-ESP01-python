@@ -65,7 +65,7 @@ class WifiAP:
 
 
 class WifiClient:
-    def __init__(self, ip: str, mac: Optional[str], unknown: Optional[Dict[str, Any]]):
+    def __init__(self, ip: str, mac: Optional[str] = None, unknown: Optional[Dict[str, Any]] = None):
         self.ip = ip
         self.mac = mac
         self.unknown = unknown
@@ -432,22 +432,23 @@ class Esp8266:
         d['data'] = data
         return d
 
-    def ip_close(self, ipd: Optional[int] = None):
+    def ip_close(self, ipd: Optional[int] = None) -> bool:
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CIPCLOSE
         if ipd is not None:
             return self.__success(self.execute(f'AT+CIPCLOSE={ipd}'))
         else:
             return self.__success(self.execute(f'AT+CIPCLOSE'))
 
-    def ip(self):
+    def ip(self) -> Union[bool, str]:
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CIFSR
         # +CIFSR:STAIP,"172.16.9.157"
         response = self.execute(f'AT+CIFSR')
         for line in response:
             if line.startswith('+CIFSR:STAIP,"'):
                 return line[len('+CIFSR:STAIP,"'):-1]
+        return False
 
-    def multiplex(self, mode: Optional[WifiMultiplex] = None):
+    def multiplex(self, mode: Optional[WifiMultiplex] = None) -> Union[bool, WifiMultiplex]:
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CIPMUX
         if mode is None:
             response = self.execute(f'AT+CIPMUX?')
@@ -459,7 +460,7 @@ class Esp8266:
             raise RuntimeError(f'Unsupported multiplex mode {mode}')
         return self.__success(self.execute(f'AT+CIPMUX={mode.value}'))
 
-    def server(self, mode: Optional[ServerMode], port: Optional[int] = 333):
+    def server(self, mode: Optional[ServerMode], port: Optional[int] = 333) -> bool:
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CIPSERVER
         if self.multiplex() is not WifiMultiplex.MULTIPLE:
             if not self.multiplex(WifiMultiplex.MULTIPLE):
@@ -479,7 +480,7 @@ class Esp8266:
         else:
             raise RuntimeError(f'Unknown server mode "{mode}"')
 
-    def transfer_mode(self, mode: Optional[TransferMode] = None):
+    def transfer_mode(self, mode: Optional[TransferMode] = None) -> Union[bool, TransferMode]:
         if mode is None:
             response = self.execute(f'AT+CIPMODE?')
             if not self.__success(response):
@@ -490,7 +491,7 @@ class Esp8266:
             raise RuntimeError(f'Unknown transfer mode "{mode}"')
         return self.__success(self.execute(f'AT+CIPMODE={mode.value}'))
 
-    def server_timeout(self, seconds: Optional[int] = None):
+    def server_timeout(self, seconds: Optional[int] = None) -> Union[bool, int]:
         if seconds is None:
             response = self.execute(f'AT+CIPSTO?')
             if not self.__success(response):
@@ -517,15 +518,16 @@ class Esp8266:
         return filtered_lines
 
     def _write(self, text):
-        self._write_raw(f"{text}\r\n".encode('ASCII'))
+        return self._write_raw(f"{text}\r\n".encode('ASCII'))
 
-    def _write_raw(self, data: bytes):
+    def _write_raw(self, data: bytes) -> Union[bool, int]:
         if self.__serial is not None:
-            self.__serial.write(data)
+            return self.__serial.write(data)
         if self.send_func is not None:
-            self.send_func(data)
+            return self.send_func(data)
+        return False
 
-    def _read_raw(self, size: int, timeout: float = 5.0):
+    def _read_raw(self, size: int, timeout: float = 5.0) -> bytearray:
         if self.__serial is not None:
             self.__serial.timeout = timeout
         if self.timeout_func is not None:
@@ -573,12 +575,12 @@ class Esp8266:
         return lines
 
     @staticmethod
-    def __trim_lines(lines):
+    def __trim_lines(lines) -> List[str]:
         length = len(lines)
-        if length == 0:
-            return []
-
         trimmed_lines = []
+        if length == 0:
+            return trimmed_lines
+
         for index in range(length):
             trimmed_lines.append(lines[index].rstrip())
         return trimmed_lines
@@ -599,7 +601,7 @@ class Esp8266:
             filtered_lines.append(line)
         return filtered_lines
 
-    def __success(self, lines, custom_end: Optional[str] = None):
+    def __success(self, lines, custom_end: Optional[str] = None) -> bool:
         if len(lines) == 0:
             self.logger.debug(f'Response validation returned [{False}]')
             return False
@@ -754,7 +756,7 @@ if __name__ == "__main__":
     # print(esp8266.version())
     # print(esp8266.mode(WifiMode.CLIENT))
     # print(esp8266.join())
-    # print(esp8266.join('IoT', 'bb22f1a57e6a84e0b82d9e58670410f2'))
+    # print(esp8266.join('SSID at home', 'MySecurePassword'))
 
-    print(esp8266.serve(DummyHTTPServer(port=80)))
+    # print(esp8266.serve(DummyHTTPServer(port=80)))
     # print(esp8266.serve(DummyTCP(port=333)))

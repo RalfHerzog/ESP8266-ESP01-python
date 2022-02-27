@@ -54,9 +54,6 @@ class MyTestCase(unittest.TestCase):
         # assert self.esp.mode(Esp8266.WifiMode.CLIENT) is True
         assert self.esp.mode(WifiMode.ACCESS_POINT) is False
 
-        with pytest.raises(TypeError):
-            self.esp.mode('')
-
     def test_join(self):
         with pytest.raises(RuntimeError):
             self.esp.join(ssid='Password is missing here')
