@@ -16,15 +16,18 @@ class MyTestCase(unittest.TestCase):
     ENCRYPTION = WifiEncryption.WPA_WPA2_PSK
 
     def setUp(self) -> None:
-        logging.basicConfig(level=logging.DEBUG)
-        self.esp: Esp8266 = Esp8266.usb()
+        self.esp: Esp8266 = Esp8266(
+            read_func=None,
+            readline_func=None,
+            send_func=None,
+            timeout_func=None
+        )
 
     def test_attention(self):
         assert self.esp.attention()
 
     def test_version(self):
         version = self.esp.version()
-        assert isinstance(version, Dict)
         assert 'AT' in version
         assert 'SDK' in version
         assert 'version' in version
@@ -46,7 +49,6 @@ class MyTestCase(unittest.TestCase):
 
     def test_mode(self):
         modes = self.esp.mode()
-        assert isinstance(modes, List)
         assert len(modes) > 0
         assert isinstance(modes[0], WifiMode)
         assert modes[0] == WifiMode.CLIENT
@@ -67,8 +69,7 @@ class MyTestCase(unittest.TestCase):
             assert self.esp.join(self.SSID, self.PASSWORD)
 
     def test_list_aps(self):
-        aps: List[WifiAP] = self.esp.list_aps()
-        assert isinstance(aps, List)
+        aps = self.esp.list_aps()
         assert len(aps) > 0
         for ap in aps:
             assert isinstance(ap, WifiAP)
@@ -113,7 +114,6 @@ class MyTestCase(unittest.TestCase):
     def test_list_clients(self):
         if self.esp.soft_ap():
             clients = self.esp.list_clients()
-            assert isinstance(clients, List)
             assert len(clients) > 0
             for client in clients:
                 assert isinstance(client, WifiClient)
