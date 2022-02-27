@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 import re
+
+import time
+
 import ulogger
 
 
@@ -84,11 +87,11 @@ class WifiClient:
 
 
 class Esp8266:
-    def __init__(self, read_func, send_func, timeout_func, readline_func, log_level=ulogger.DEBUG):
+    def __init__(self, read_func, send_func, readline_func, timeout_func=None, log_level=ulogger.DEBUG):
         self.read_func = read_func
         self.send_func = send_func
-        self.timeout_func = timeout_func
         self.readline_func = readline_func
+        self.timeout_func = timeout_func
 
         self.logger = ulogger.Logger(self.__class__.__name__)
         self.logger.level = log_level
@@ -162,9 +165,14 @@ class Esp8266:
                 return False
             for line in response:
                 if line.startswith('+CWJAP:'):
-                    regex = r"\+CWJAP:\"(?P<wifi>.+)\",\"(?P<mac>[a-z0-9]{2}(:?[a-z0-9]{2}){5})\",(?P<channel>\d+),(?P<signal>-?\d+)"
+                    regex = r"\+CWJAP:\"(.+)\",\"([a-z0-9][a-z0-9]:[a-z0-9][a-z0-9]:[a-z0-9][a-z0-9]:[a-z0-9][a-z0-9]:[a-z0-9][a-z0-9]:[a-z0-9][a-z0-9])\",(\d+),(-?\d+)"
                     match = re.search(regex, line)
-                    return match.groupdict()
+                    return {
+                        'wifi': match.group(1),
+                        'mac': match.group(2),
+                        'channel': match.group(3),
+                        'signal': match.group(4)
+                    }
 
     def list_aps(self, ssid=None, mac=None, channel=None):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CWLAP
@@ -179,17 +187,17 @@ class Esp8266:
         aps = []
         for line in self.__filter_lines('+CWLAP', response, payload_only=True):
             if line.startswith('+CWLAP:'):
-                regex = r"\+CWLAP:\((?P<encryption>\d),\"(?P<wifi>.+)\",(?P<rssi>-?\d+),\"(?P<mac>[a-z0-9]{2}(:?[a-z0-9]{2}){5})\",(?P<channel>\d+),(?P<unknown1>-?\d+)?,(?P<unknown2>\d+)\)?"
+                regex = r"\+CWLAP:\((\d),\"(.+)\",(-?\d+),\"([a-z0-9][a-z0-9](:?[a-z0-9][a-z0-9])(:?[a-z0-9][a-z0-9])(:?[a-z0-9][a-z0-9])(:?[a-z0-9][a-z0-9])(:?[a-z0-9][a-z0-9]))\",(\d+),(-?\d+)?,(\d+)\)?"
                 match = re.search(regex, line)
                 if match is not None:
                     aps.append(WifiAP(
-                        match.group('wifi'),
-                        match.group('mac'),
-                        int(match.group('encryption')),
-                        int(match.group('rssi')),
-                        int(match.group('channel')),
-                        match.group('unknown1'),
-                        match.group('unknown2')
+                        match.group(2),
+                        match.group(4),
+                        int(match.group(1)),
+                        int(match.group(3)),
+                        int(match.group(5)),
+                        match.group(6),
+                        match.group(7)
                     ))
                 else:
                     raise RuntimeError(f'Regex mismatch "{line}"')
@@ -201,11 +209,10 @@ class Esp8266:
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CWQAP
         return self.__success(self.execute(f'AT+CWQAP'))
 
-    def soft_ap(self, ssid=None, password=None, channel=None,
-                encryption=None):
+    def soft_ap(self, ssid=None, password=None, channel=None, encryption=None):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CWSAP
         if ssid is not None and password is not None and channel is not None and encryption is not None:
-            return self.__success(self.execute(f'AT+CWSAP="{ssid}","{password}",{channel},{encryption.value}'))
+            return self.__success(self.execute(f'AT+CWSAP="{ssid}","{password}",{channel},{encryption}'))
         elif ssid is None and password is None and channel is None and encryption is None:
             response = self.execute(f'AT+CWSAP?')
             if not self.__success(response):
@@ -213,12 +220,15 @@ class Esp8266:
             for line in response:
                 if line.startswith('+CWSAP:'):
                     # Unchecked due to limited capabilities of ESP-01
-                    regex = r"\+CWSAP:\"(?P<ssid>.+)\",\"(?P<password>.+)\",(?P<channel>\d+),(?P<encryption>\d)"
+                    regex = r"\+CWSAP:\"(.+)\",\"(.+)\",(\d+),(\d)"
                     match = re.search(regex, line)
                     if match is not None:
-                        d = match.groupdict()
-                        d['encryption'] = int(d['encryption'])
-                        d['channel'] = int(d['channel'])
+                        d = {
+                            'ssid': match.group(1),
+                            'password': match.group(2),
+                            'channel': int(match.group(3)),
+                            'encryption': int(match.group(4))
+                        }
                         return d
                 else:
                     raise RuntimeError(f'Unexpected response "{line}"')
@@ -232,13 +242,13 @@ class Esp8266:
         if not self.__success(response):
             return False
         # Unchecked due to limited capabilities of ESP-01
-        regex = r"(?P<ip>[0-9]{1,3}(\.[0-9]{1,3}){3}),(?P<unknown>.+)"
+        regex = r"([0-9]{1,3}(\.[0-9]{1,3})(\.[0-9]{1,3})(\.[0-9]{1,3})),(.+)"
 
         clients = []
         for line in response:
             match = re.search(regex, line)
             if match is not None:
-                clients.append(WifiClient(match.group('ip'), unknown=match.group('unknown')))
+                clients.append(WifiClient(match.group(1), unknown=match.group(2)))
             else:
                 raise RuntimeError(f'Unexpected response "{line}"')
         return clients
@@ -322,18 +332,17 @@ class Esp8266:
                 raise RuntimeError(f'Unexpected response "{line}"')
         return response
 
-    def connect(self, t=None, address=None, port=None,
-                ipd=None):
+    def connect(self, t=None, address=None, port=None, ipd=None):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CIPSTART
         if t is None and address is None and port is None and ipd is None:
             return self.execute(f'AT+CIPSTART=?', payload_only=True)
         if t and address and port:
             if ipd is None:
                 # Single connection
-                response = self.execute(f'AT+CIPSTART="{t.value}","{address}",{port}')
+                response = self.execute(f'AT+CIPSTART="{t}","{address}",{port}')
             else:
                 # Multiplex connection
-                response = self.execute(f'AT+CIPSTART={ipd},"{t.value}","{address}",{port}')
+                response = self.execute(f'AT+CIPSTART={ipd},"{t}","{address}",{port}')
             if not self.__success(response) and response[0] != 'ALREADY CONNECTED':
                 return False
             return True
@@ -371,16 +380,16 @@ class Esp8266:
         self.read_lines(check_end_func=Esp8266._check_send)
         return True
 
-    def receive(self, ipd=None, timeout=5.0):
+    def receive(self, ipd=None, timeout=1.0):
         if ipd is not None:
             response = self.read_lines(
                 timeout=timeout,
-                check_end_func=lambda lines: lines[0].startswith(f'+IPD,{ipd},')
+                check_end_func=lambda lines: lines[-1].startswith(f'+IPD,{ipd},')
             )
         else:
             response = self.read_lines(
                 timeout=timeout,
-                check_end_func=lambda lines: lines[0].startswith('+IPD,')
+                check_end_func=lambda lines: lines[-1].startswith('+IPD,')
             )
         if len(response) == 0:
             return {
@@ -388,15 +397,20 @@ class Esp8266:
                 'length': -1,
                 'data': None
             }
-        line = response[0]
-        regex = r'\+IPD,(?P<id>\d+)?,?(?P<length>\d+):'
+        line = response[-1]
+        regex = r'\+IPD,(\d+)(,\d+)?:'
         match = re.search(regex, line)
         if match is None:
             raise RuntimeError(f'regex mismatch "{line}"')
-        d = match.groupdict()
-        if 'id' in d:
-            d['id'] = int(d['id'])
-        length = d['length'] = int(d['length'])
+        n_groups = len(match.groups())
+        d = {}
+        if n_groups == 3:
+            print(match.group(1), match.group(2))
+            d['id'] = int(match.group(1))
+            length = d['length'] = int(match.group(2)[1:])
+        else:
+            print(match.group(1))
+            length = d['length'] = int(match.group(1))
         pos = match.span()[1]
         data = line[pos:].encode('ASCII')
 
@@ -463,7 +477,7 @@ class Esp8266:
             return int(mode)
         if mode not in TransferMode.ALL:
             raise RuntimeError(f'Unknown transfer mode "{mode}"')
-        return self.__success(self.execute(f'AT+CIPMODE={mode.value}'))
+        return self.__success(self.execute(f'AT+CIPMODE={mode}'))
 
     def server_timeout(self, seconds=None):
         if seconds is None:
@@ -497,10 +511,13 @@ class Esp8266:
     def _write_raw(self, data: bytes):
         self.send_func(data)
 
-    def _read_raw(self, size: int, timeout: float = 5.0):
-        self.timeout_func(timeout)
+    def _read_raw(self, size: int, timeout: float = 1.0):
+        if self.timeout_func is not None:
+            self.timeout_func(timeout)
         data = []
         while size > 0:
+            if self.timeout_func is None:
+                time.sleep(timeout)
             chunk = self.read_func(size)
             if chunk is None:
                 break
@@ -508,10 +525,13 @@ class Esp8266:
             data.append(chunk.decode('ASCII'))
         return bytearray(''.join(data).encode('ASCII'))
 
-    def read_lines(self, check_end_func=None, timeout: float = 5.0, log_timeout=True):
+    def read_lines(self, check_end_func=None, timeout: float = 1.0, log_timeout=True):
         lines = []
         while True:
-            self.timeout_func(timeout)
+            if self.timeout_func is not None:
+                self.timeout_func(timeout)
+            else:
+                time.sleep(timeout)
             line = self.readline_func()
 
             if len(line) == 0:
@@ -519,7 +539,7 @@ class Esp8266:
                     self.logger.warn(f'Timeout waiting for reply')
                 break
             try:
-                line_decoded = line.decode()
+                line_decoded = line.decode("ASCII")
             except UnicodeDecodeError:
                 self.logger.error(f'Error decode: {line}')
                 continue
@@ -578,7 +598,7 @@ class Esp8266:
     def _check_accept(lines):
         if len(lines) < 2:
             return False
-        regex = r'^(?P<ipd>\d),(?P<state>CONNECT|CLOSED)\r\n$'
+        regex = r'^(\d),(CONNECT|CLOSED)\r\n$'
         first_line, second_line = lines[0], lines[1]
         match = re.match(regex, first_line)
         if match and second_line == '\r\n':
@@ -591,19 +611,19 @@ class Esp8266:
 
             if lines:
                 [self.logger.debug(f'<= {line}') for line in lines]
-                regex = r'^(?P<ipd>\d),(?P<state>CONNECT|CLOSED)\r\n$'
+                regex = r'^(\d),(CONNECT|CLOSED)\r\n$'
                 first_line = lines[0]
                 match = re.match(regex, first_line)
                 if match is None:
                     continue
-                if match.group('state') == 'CONNECT':
-                    return int(match.group('ipd'))
+                if match.group(1) == 'CONNECT':
+                    return int(match.group(1))
                 else:
                     return None
 
 
 class Server:
-    def __init__(self, port: int, log_level=ulogger.INFO, receive_timeout=5.0):
+    def __init__(self, port: int, log_level=ulogger.INFO, receive_timeout=1.0):
         if not isinstance(port, int):
             raise RuntimeError(f'server port must be numeric (int)')
 
