@@ -34,11 +34,12 @@ implementation to connect a custom python application to a wireless network. For
 HTTP-Client on raspberry pi / PC using an usb-adapter receiving own external ip address
 
 ```python
-from esp8266.esp8266_01 import Esp8266, Type
+from esp8266.esp8266_01 import Esp8266, Type, WifiMode
 
 esp = Esp8266.usb()
 
 # Join your network
+esp.mode(WifiMode.CLIENT)
 esp.join('SSID', 'MySecureWifiPassword')
 
 # Test connection
@@ -59,5 +60,40 @@ if esp.attention():
 Output from raspberry pi / PC using an usb-adapter
 
 ```text
-...
+WARNING:Esp8266:Timeout waiting for reply
+INFO:Esp8266:=> AT
+DEBUG:Esp8266:<= OK
+DEBUG:Esp8266:Response validation returned [True]
+INFO:Esp8266:=> AT+CWMODE=1
+DEBUG:Esp8266:<= OK
+DEBUG:Esp8266:Response validation returned [True]
+INFO:Esp8266:=> AT+CWJAP="SSID","MySecureWifiPassword"
+DEBUG:Esp8266:<= WIFI DISCONNECT
+DEBUG:Esp8266:<= WIFI CONNECTED
+DEBUG:Esp8266:<= WIFI GOT IP
+DEBUG:Esp8266:<= OK
+DEBUG:Esp8266:Response validation returned [True]
+INFO:Esp8266:=> AT+CIPSTART="TCP","api.ipify.org",80
+DEBUG:Esp8266:<= CONNECT
+DEBUG:Esp8266:<= OK
+DEBUG:Esp8266:Response validation returned [True]
+INFO:Esp8266:=> AT+CIPSEND=39
+DEBUG:Esp8266:<= OK
+DEBUG:Esp8266:Response validation returned [True]
+INFO:Esp8266:=> Write 39 bytes ...
+HTTP/1.1 200 OK
+Server: Cowboy
+Connection: close
+Content-Type: text/plain
+Vary: Origin
+Date: Mon, 28 Feb 2022 21:42:07 GMT
+Content-Length: 15
+Via: 1.1 vegur
+
+123.21.131.154
+INFO:Esp8266:=> AT+CIPCLOSE
+DEBUG:Esp8266:<= CLOSED
+DEBUG:Esp8266:<= AT+CIPCLOSE
+DEBUG:Esp8266:<= ERROR
+DEBUG:Esp8266:Response validation returned [False]
 ```

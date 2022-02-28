@@ -89,7 +89,7 @@ class Esp8266:
     @staticmethod
     def usb(log_level=logging.DEBUG):
         esp = Esp8266(
-            port='/dev/ttyUSB0',
+            port='/dev/ttyUSB1',
             baudrate=115200,
             timeout=1,
             parity=serial.PARITY_NONE,
@@ -161,7 +161,7 @@ class Esp8266:
         if mode is not None:
             if mode not in WifiMode:
                 raise RuntimeError(f'Unsupported wifi mode "{str(mode)}"')
-            return self.__success(self.execute(f'AT+CWMODE={str(mode)}'))
+            return self.__success(self.execute(f'AT+CWMODE={mode.value}'))
         else:
             response = self.execute(f'AT+CWMODE?', payload_only=True)
             modes: List[WifiMode] = []
@@ -359,7 +359,7 @@ class Esp8266:
             else:
                 # Multiplex connection
                 response = self.execute(f'AT+CIPSTART={ipd},"{t.value}","{address}",{port}')
-            if not self.__success(response) or response[0] != 'ALREADY CONNECTED':
+            if not self.__success(response) and len(response) > 0 and response[0] != 'ALREADY CONNECTED':
                 return False
             return True
         else:
@@ -400,12 +400,12 @@ class Esp8266:
         if ipd is not None:
             response = self.read_lines(
                 timeout=timeout,
-                check_end_func=lambda lines: lines[0].startswith(f'+IPD,{ipd},')
+                check_end_func=lambda lines: lines[-1].startswith(f'+IPD,{ipd},')
             )
         else:
             response = self.read_lines(
                 timeout=timeout,
-                check_end_func=lambda lines: lines[0].startswith('+IPD,')
+                check_end_func=lambda lines: lines[-1].startswith('+IPD,')
             )
         if len(response) == 0:
             return {
@@ -413,15 +413,17 @@ class Esp8266:
                 'length': -1,
                 'data': None
             }
-        line = response[0]
-        regex = r'\+IPD,(?P<id>\d+)?,?(?P<length>\d+):'
+        line = response[-1]
+        regex = r'\+IPD,(?P<length_or_id>\d+)(?P<length_or_none>,\d+)?:'
         match = re.search(regex, line)
         if match is None:
             raise RuntimeError(f'regex mismatch "{line}"')
         d = match.groupdict()
-        if 'id' in d:
-            d['id'] = int(d['id'])
-        length = d['length'] = int(d['length'])
+        if d['length_or_none'] is not None:
+            d['id'] = int(d['length_or_id'])
+            length = d['length'] = int(d['length_or_none'][1:])
+        else:
+            length = d['length'] = int(d['length_or_id'])
         pos = match.span()[1]
         data = line[pos:].encode('ASCII')
 
@@ -545,7 +547,7 @@ class Esp8266:
             data.append(chunk.decode('ASCII'))
         return bytearray(''.join(data).encode('ASCII'))
 
-    def read_lines(self, check_end_func=None, timeout: float = 5.0, log_timeout=True) -> List[str]:
+    def read_lines(self, check_end_func=None, timeout: float = 10.0, log_timeout=True) -> List[str]:
         lines = []
         while True:
             line = ''
@@ -754,9 +756,23 @@ if __name__ == "__main__":
     # print(esp8266.reset())
     # print(esp8266.attention())
     # print(esp8266.version())
-    # print(esp8266.mode(WifiMode.CLIENT))
-    # print(esp8266.join())
-    # print(esp8266.join('SSID at home', 'MySecurePassword'))
+
+    # Test connection
+    if esp8266.attention():
+        esp8266.mode(WifiMode.CLIENT)
+        esp8266.join('SSID', 'MySecureWifiPassword')
+
+        # Try to connect to remote server
+        if esp8266.connect(t=Type.TCP, address='api.ipify.org', port=80):
+            # Send query
+            query = f'GET / HTTP/1.0\r\nHost: api.ipify.org\r\n\r\n'
+            if esp8266.send(query):
+                # Show response on console
+                data = esp8266.receive()['data']
+                if data is not None:
+                    print(data.decode('ASCII'))
+            # Close connection if not already done by the server
+            esp8266.ip_close()
 
     # print(esp8266.serve(DummyHTTPServer(port=80)))
     # print(esp8266.serve(DummyTCP(port=333)))
