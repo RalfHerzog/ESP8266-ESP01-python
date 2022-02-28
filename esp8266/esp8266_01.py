@@ -359,7 +359,7 @@ class Esp8266:
             else:
                 # Multiplex connection
                 response = self.execute(f'AT+CIPSTART={ipd},"{t.value}","{address}",{port}')
-            if not self.__success(response) and response[0] != 'ALREADY CONNECTED':
+            if not self.__success(response) or response[0] != 'ALREADY CONNECTED':
                 return False
             return True
         else:

@@ -31,12 +31,15 @@ implementation to connect a custom python application to a wireless network. For
 ### Sample code
 
 ---
-HTTP-Client on raspberry pi receiving own external ip address
+HTTP-Client on raspberry pi / PC using an usb-adapter receiving own external ip address
 
 ```python
 from esp8266.esp8266_01 import Esp8266, Type
 
 esp = Esp8266.usb()
+
+# Join your network
+esp.join('SSID', 'MySecureWifiPassword')
 
 # Test connection
 if esp.attention():
@@ -53,10 +56,8 @@ if esp.attention():
         esp.ip_close()
 ```
 
-### TODO
+Output from raspberry pi / PC using an usb-adapter
 
-* [ ] Sample mqtt client
-* [ ] Check timeout implementation for efficiency (micropython)
-* [ ] SSL support for secure data transport
-* [ ] Functionality covered by tests (partial)
-* [ ] ~~Act as wireless access point (not supported)~~
+```text
+...
+```
