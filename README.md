@@ -62,10 +62,23 @@ if esp.attention():
         esp.ip_close()
 ```
 
-### TODO
+Output from raspberry pico console
 
-* [ ] Sample mqtt client
-* [ ] Check timeout implementation for efficiency (micropython)
-* [ ] SSL support for secure data transport
-* [ ] Functionality covered by tests (partial)
-* [ ] ~~Act as wireless access point (not supported)~~
+```text
+1609459264 - INFO - Esp8266 - => AT                                             
+1609459264 - INFO - Esp8266 - => AT+CIPSTART="TCP","api.ipify.org",80           
+1609459265 - INFO - Esp8266 - => AT+CIPSEND=39                                  
+1609459265 - INFO - Esp8266 - => Write 39 bytes ...                             
+182                                                                             
+HTTP/1.1 200 OK                                                                 
+Server: Cowboy                                                                  
+Connection: close                                                               
+Content-Type: text/plain                                                        
+Vary: Origin                                                                    
+Date: Mon, 28 Feb 2022 20:53:29 GMT                                             
+Content-Length: 15                                                              
+Via: 1.1 vegur                                                                  
+                                                                                
+123.1.23.234                                                                 
+1609459266 - INFO - Esp8266 - => AT+CIPCLOSE  
+```
