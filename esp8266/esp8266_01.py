@@ -354,7 +354,9 @@ class Esp8266:
         for i, line in enumerate(lines):
             if line == 'SEND OK\r\n':  # and len(lines) > i + 1 and lines[i + 1] == '\r\n':
                 return True
-        return False
+            if line == 'SEND FAIL\r\n':
+                return False
+        return None
 
     def send(self, data=None, ipd=None):
         # def send(self, length = None, i = None):
@@ -377,8 +379,8 @@ class Esp8266:
         else:
             raise RuntimeError(f'data type {type(data)} cannot be sent')
 
-        self.read_lines(check_end_func=Esp8266._check_send)
-        return True
+        lines = self.read_lines(check_end_func=Esp8266._check_send)
+        return Esp8266._check_send(lines)
 
     def receive(self, ipd=None, timeout=1.0):
         if ipd is not None:
@@ -505,50 +507,61 @@ class Esp8266:
 
         return filtered_lines
 
-    def _write(self, text):
-        self._write_raw(f"{text}\r\n".encode('ASCII'))
+    def _write(self, text, timeout: float = 0.5):
+        self._write_raw(f"{text}\r\n".encode('ASCII'), timeout=timeout)
 
-    def _write_raw(self, data: bytes):
-        self.send_func(data)
+    def _write_raw(self, data: bytes, timeout: float = 0.5):
+        n_bytes = self.send_func(data)
+        if n_bytes is None:
+            self.logger.warn(f'Timeout waiting for send data')
+            return None
+        if n_bytes != len(data):
+            self.logger.error(f'Wrote only {n_bytes} of {len(data)} bytes')
+            return n_bytes
+        time.sleep(timeout)
 
-    def _read_raw(self, size: int, timeout: float = 1.0):
+    def _read_raw(self, size: int, timeout: float = 0.5):
         if self.timeout_func is not None:
             self.timeout_func(timeout)
         data = []
+        t = time.time()
         while size > 0:
-            if self.timeout_func is None:
-                time.sleep(timeout)
             chunk = self.read_func(size)
             if chunk is None:
-                break
+                if size > 0 and self.timeout_func is None and (time.time() - t) > timeout:
+                    self.logger.warn(f'Timeout waiting for reply')
+                    break
+                continue
             size -= len(chunk)
             data.append(chunk.decode('ASCII'))
         return bytearray(''.join(data).encode('ASCII'))
 
-    def read_lines(self, check_end_func=None, timeout: float = 1.0, log_timeout=True):
+    def read_lines(self, check_end_func=None, timeout: float = 0.5, log_timeout=True):
+        if self.timeout_func is not None:
+            self.timeout_func(timeout)
         lines = []
+        t = time.time()
         while True:
-            if self.timeout_func is not None:
-                self.timeout_func(timeout)
-            else:
-                time.sleep(timeout)
             line = self.readline_func()
-
             if len(line) == 0:
-                if log_timeout is not None:
-                    self.logger.warn(f'Timeout waiting for reply')
-                break
+                if self.timeout_func is None and (time.time() - t) > timeout:
+                    if log_timeout is not None:
+                        self.logger.warn(f'Timeout waiting for reply')
+                    break
+                continue
             try:
                 line_decoded = line.decode("ASCII")
-            except UnicodeDecodeError:
+            except UnicodeError:
                 self.logger.error(f'Error decode: {line}')
                 continue
             lines.append(line_decoded)
             if check_end_func is None:
                 if line_decoded == "OK\r\n" or line_decoded == "ERROR\r\n":
                     break
-            elif check_end_func(lines):
-                break
+            else:
+                check = check_end_func(lines)
+                if check is True:
+                    break
         return lines
 
     @staticmethod
@@ -586,7 +599,7 @@ class Esp8266:
         self.logger.debug(f'Response validation returned [{success}]')
         return success
 
-    def __clear_buffer(self, timeout: float = 1.0):
+    def __clear_buffer(self, timeout: float = 0.5):
         self.read_lines(timeout=timeout, log_timeout=False)
 
     def serve(self, server):
@@ -597,7 +610,7 @@ class Esp8266:
     @staticmethod
     def _check_accept(lines):
         if len(lines) < 2:
-            return False
+            return None
         regex = r'^(\d),(CONNECT|CLOSED)\r\n$'
         first_line, second_line = lines[0], lines[1]
         match = re.match(regex, first_line)
@@ -623,7 +636,7 @@ class Esp8266:
 
 
 class Server:
-    def __init__(self, port: int, log_level=ulogger.INFO, receive_timeout=1.0):
+    def __init__(self, port: int, log_level=ulogger.INFO, receive_timeout=0.5):
         if not isinstance(port, int):
             raise RuntimeError(f'server port must be numeric (int)')
 
@@ -650,7 +663,7 @@ class Server:
 
             if d['length'] == -1:
                 self.logger.info(f'No data was sent after accepting connection')
-            data = d['data']
+            data: bytearray = d['data']
 
             if data is not None:
                 self.logger.debug(f'<= {data.decode("ASCII")}')
