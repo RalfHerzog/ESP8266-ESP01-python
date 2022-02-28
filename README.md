@@ -49,6 +49,10 @@ esp = Esp8266(
     # Unfortunately setting timeout for UART after initialization is not possible
     timeout_func=None
 )
+
+# Join network
+esp.join("SSID", "MySecureWifiPassword")
+
 # Test connection
 if esp.attention():
     # Try to connect to remote server
