@@ -341,7 +341,7 @@ class Esp8266:
             else:
                 # Multiplex connection
                 response = self.execute(f'AT+CIPSTART={ipd},"{t}","{address}",{port}')
-            if not self.__success(response) and response[0] != 'ALREADY CONNECTED':
+            if not self.__success(response) and len(response) > 0 and response[0] != 'ALREADY CONNECTED':
                 return False
             return True
         else:
@@ -405,11 +405,9 @@ class Esp8266:
         n_groups = len(match.groups())
         d = {}
         if n_groups == 3:
-            print(match.group(1), match.group(2))
             d['id'] = int(match.group(1))
             length = d['length'] = int(match.group(2)[1:])
         else:
-            print(match.group(1))
             length = d['length'] = int(match.group(1))
         pos = match.span()[1]
         data = line[pos:].encode('ASCII')
@@ -534,7 +532,7 @@ class Esp8266:
             data.append(chunk.decode('ASCII'))
         return bytearray(''.join(data).encode('ASCII'))
 
-    def read_lines(self, check_end_func=None, timeout: float = 0.5, log_timeout=True):
+    def read_lines(self, check_end_func=None, timeout: float = 10.0, log_timeout=True):
         if self.timeout_func is not None:
             self.timeout_func(timeout)
         lines = []

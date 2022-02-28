@@ -36,7 +36,7 @@ HTTP-Client on raspberry pi pico receiving own external ip address
 ```python
 import ulogger
 from machine import Pin, UART
-from esp8266.esp8266_01 import Esp8266, Type
+from esp8266.esp8266_01 import Esp8266, Type, WifiMode
 
 # Connected to UART1 at GP4 and GP5
 uart = UART(1, 115200, tx=Pin(4), rx=Pin(5))
@@ -51,6 +51,7 @@ esp = Esp8266(
 )
 
 # Join network
+esp.mode(WifiMode.CLIENT)
 esp.join("SSID", "MySecureWifiPassword")
 
 # Test connection
@@ -83,6 +84,6 @@ Date: Mon, 28 Feb 2022 20:53:29 GMT
 Content-Length: 15                                                              
 Via: 1.1 vegur                                                                  
                                                                                 
-123.1.23.234                                                                 
+123.177.232.234                                                                 
 1609459266 - INFO - Esp8266 - => AT+CIPCLOSE  
 ```
