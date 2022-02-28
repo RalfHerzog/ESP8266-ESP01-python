@@ -8,7 +8,7 @@ The wireless chip is known for its energy efficient data transmission compared t
 an operating system. The communication with the chip uses AT commands via a serial line interface (UART). It is
 therefore not suitable as a general wifi adapter but very useful in low-energy scenarios like microcontrollers for IoT.
 
-![ESP8266 ESP-01 with usb adapter](https://github.com/RalfHerzog/ESP8266-ESP01-python/blob/micropython/img/esp8266_esp-01.jpg?raw=true)
+![ESP8266 ESP-01 with usb adapter](img/esp8266_esp-01.jpg)
 
 #### Example use-case
 
