@@ -94,7 +94,7 @@ class Esp8266:
         self.logger = ulogger.Logger(self.__class__.__name__)
         self.logger.level = log_level
 
-        self.__clear_buffer()
+        self.clear_buffer()
 
     def attention(self):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT
@@ -391,7 +391,7 @@ class Esp8266:
                 timeout=timeout,
                 check_end_func=lambda lines: lines[-1].startswith('+IPD,')
             )
-        if len(response) == 0:
+        if len(response) == 0 or response[-1] == '+IPD,':
             return {
                 'id': None,
                 'length': -1,
@@ -532,7 +532,7 @@ class Esp8266:
             data.append(chunk.decode('ASCII'))
         return bytearray(''.join(data).encode('ASCII'))
 
-    def read_lines(self, check_end_func=None, timeout: float = 10.0, log_timeout=True):
+    def read_lines(self, check_end_func=None, timeout: float = 20.0, log_timeout=True):
         if self.timeout_func is not None:
             self.timeout_func(timeout)
         lines = []
@@ -595,7 +595,7 @@ class Esp8266:
         self.logger.debug(f'Response validation returned [{success}]')
         return success
 
-    def __clear_buffer(self, timeout: float = 0.5):
+    def clear_buffer(self, timeout: float = 0.5):
         self.read_lines(timeout=timeout, log_timeout=False)
 
     def serve(self, server):
