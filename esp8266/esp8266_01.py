@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import logging
 import re
+import time
 from enum import Enum
 from typing import Optional, List, Dict, Any, Union
 
@@ -61,6 +62,15 @@ class WifiAP:
         self.encryption = encryption
         self.rssi = rssi
         self.channel = channel
+        self.unknown = kwargs
+
+
+class WifiStation:
+    def __init__(self, ssid: str, mac: str, signal: int, channel: int, *kwargs):
+        self.ssid = ssid
+        self.mac = mac
+        self.signal = int(signal)
+        self.channel = int(channel)
         self.unknown = kwargs
 
 
@@ -172,23 +182,39 @@ class Esp8266:
                     raise RuntimeError(f'Unhandled line "{line}"')
             return modes
 
-    def join(self, ssid: Optional[str] = None, password: Optional[str] = None):
+    def join(self, ssid: Optional[str] = None, password: Optional[str] = None, retries: int = 1) -> \
+            Union[bool, WifiStation]:
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CWJAP
         if ssid is None and password:
             raise RuntimeError(f'Empty ssid')
         if ssid and password is None:
             raise RuntimeError(f'Empty password')
         if ssid and password:
-            return self.__success(self.execute(f'AT+CWJAP="{ssid}","{password}"'))
+            wifi_station = self.join()
+            if wifi_station and wifi_station.ssid == ssid:
+                return True
+
+            response = self.execute(f'AT+CWJAP="{ssid}","{password}"')
+            retry = 1
+            while retry <= retries and not self.__success(response):
+                self.logger.info(f'Retry to connect to wifi {retry}/{retries}')
+                time.sleep(1)
+                wifi_station = self.join()
+                if not wifi_station:
+                    response = self.execute(f'AT+CWJAP="{ssid}","{password}"')
+                retry += 1
+            return self.__success(response)
         else:
             response = self.execute(f'AT+CWJAP?')
             if not self.__success(response):
                 return False
-            for line in response:
+            for line in self.__filter_lines('AT+CWJAP?', response):
                 if line.startswith('+CWJAP:'):
-                    regex = r"\+CWJAP:\"(?P<wifi>.+)\",\"(?P<mac>[a-z0-9]{2}(:?[a-z0-9]{2}){5})\",(?P<channel>\d+),(?P<signal>-?\d+)"
+                    regex = r"\+CWJAP:\"(?P<ssid>.+)\",\"(?P<mac>[a-z0-9]{2}(:[a-z0-9]{2}){5})\",(?P<channel>\d+),(?P<signal>-?\d+)"
                     match = re.search(regex, line)
-                    return match.groupdict()
+                    if match is not None:
+                        return WifiStation(**match.groupdict())
+            return False
 
     def list_aps(self, ssid: Optional[str] = None, mac: Optional[str] = None, channel: Optional[int] = None) -> \
             Union[bool, List[WifiAP]]:
@@ -396,7 +422,7 @@ class Esp8266:
         self.read_lines(check_end_func=Esp8266._check_send)
         return True
 
-    def receive(self, ipd: Optional[int] = None, timeout: Optional[float] = 5.0) -> Dict[str, Any]:
+    def receive(self, ipd: Optional[int] = None, timeout: Optional[float] = 5.0) -> Union[bool, Dict[str, Any]]:
         if ipd is not None:
             response = self.read_lines(
                 timeout=timeout,
@@ -417,13 +443,14 @@ class Esp8266:
         regex = r'\+IPD,(?P<length_or_id>\d+)(?P<length_or_none>,\d+)?:'
         match = re.search(regex, line)
         if match is None:
-            raise RuntimeError(f'regex mismatch "{line}"')
+            return False
         d = match.groupdict()
         if d['length_or_none'] is not None:
             d['id'] = int(d['length_or_id'])
             length = d['length'] = int(d['length_or_none'][1:])
         else:
             length = d['length'] = int(d['length_or_id'])
+        self.logger.info(f'<= Receive {length} bytes ...')
         pos = match.span()[1]
         data = line[pos:].encode('ASCII')
 
@@ -431,7 +458,15 @@ class Esp8266:
         response = self._read_raw(length - len(data))
         data += response
 
+        d2 = self.receive(ipd=ipd, timeout=0.1)
+        if d2 and d2['data'] is not None:
+            data += d2['data']
+
         d['data'] = data
+        return d
+
+    def receive_all(self, ipd: Optional[int] = None, timeout: Optional[float] = 5.0) -> Dict[str, Any]:
+        d = self.receive(ipd=ipd, timeout=timeout)
         return d
 
     def ip_close(self, ipd: Optional[int] = None) -> bool:
@@ -758,21 +793,26 @@ if __name__ == "__main__":
     # print(esp8266.version())
 
     # Test connection
-    if esp8266.attention():
-        esp8266.mode(WifiMode.CLIENT)
-        esp8266.join('SSID', 'MySecureWifiPassword')
+    if not esp8266.attention():
+        exit(-1)
 
-        # Try to connect to remote server
-        if esp8266.connect(t=Type.TCP, address='api.ipify.org', port=80):
-            # Send query
-            query = f'GET / HTTP/1.0\r\nHost: api.ipify.org\r\n\r\n'
-            if esp8266.send(query):
-                # Show response on console
-                data = esp8266.receive()['data']
-                if data is not None:
-                    print(data.decode('ASCII'))
-            # Close connection if not already done by the server
-            esp8266.ip_close()
+    esp8266.mode(WifiMode.CLIENT)
+    if not esp8266.join('SSID', 'MySecureWifiPassword'):
+        exit(-1)
+
+    # Try to connect to remote server
+    if esp8266.connect(t=Type.TCP, address='example.org', port=80):
+        # Send query
+        query = f'GET / HTTP/1.1\r\nHost: example.org\r\nConnection: close\r\n\r\n'
+        if esp8266.send(query):
+            # Show response on console
+            data = esp8266.receive()['data']
+            if data is not None:
+                s = data.decode('ASCII')
+                print(len(s))
+                print(s)
+        # Close connection if not already done by the server
+        esp8266.ip_close()
 
     # print(esp8266.serve(DummyHTTPServer(port=80)))
     # print(esp8266.serve(DummyTCP(port=333)))
