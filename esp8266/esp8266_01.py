@@ -77,6 +77,15 @@ class WifiAP:
         self.unknown = kwargs
 
 
+class WifiStation:
+    def __init__(self, ssid: str, mac: str, signal: int, channel: int, *kwargs):
+        self.ssid = ssid
+        self.mac = mac
+        self.signal = int(signal)
+        self.channel = int(channel)
+        self.unknown = kwargs
+
+
 class WifiClient:
     def __init__(self, ip: str, mac: str = None, unknown=None):
         self.ip = ip
@@ -149,28 +158,40 @@ class Esp8266:
                     raise RuntimeError(f'Unhandled line "{line}"')
             return modes
 
-    def join(self, ssid=None, password=None):
+    def join(self, ssid=None, password=None, retries=1):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CWJAP
         if ssid is None and password:
             raise RuntimeError(f'Empty ssid')
         if ssid and password is None:
             raise RuntimeError(f'Empty password')
         if ssid and password:
-            return self.__success(self.execute(f'AT+CWJAP="{ssid}","{password}"'))
+            wifi_station = self.join()
+            if wifi_station and wifi_station.ssid == ssid:
+                return True
+
+            response = self.execute(f'AT+CWJAP="{ssid}","{password}"')
+            retry = 1
+            while retry <= retries and not self.__success(response):
+                self.logger.info(f'Retry to connect to wifi {retry}/{retries}')
+                time.sleep(1)
+                wifi_station = self.join()
+                if not wifi_station:
+                    response = self.execute(f'AT+CWJAP="{ssid}","{password}"')
+                retry += 1
+            return self.__success(response)
         else:
             response = self.execute(f'AT+CWJAP?')
             if not self.__success(response):
                 return False
-            for line in response:
+            for line in self.__filter_lines('AT+CWJAP?', response):
                 if line.startswith('+CWJAP:'):
                     regex = r"\+CWJAP:\"(.+)\",\"([a-z0-9][a-z0-9]:[a-z0-9][a-z0-9]:[a-z0-9][a-z0-9]:[a-z0-9][a-z0-9]:[a-z0-9][a-z0-9]:[a-z0-9][a-z0-9])\",(\d+),(-?\d+)"
                     match = re.search(regex, line)
-                    return {
-                        'wifi': match.group(1),
-                        'mac': match.group(2),
-                        'channel': match.group(3),
-                        'signal': match.group(4)
-                    }
+                    if match is not None:
+                        return WifiStation(
+                            ssid=match.group(1), mac=match.group(2), channel=match.group(3), signal=match.group(4)
+                        )
+            return False
 
     def list_aps(self, ssid=None, mac=None, channel=None):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CWLAP
@@ -416,6 +437,10 @@ class Esp8266:
         response = self._read_raw(length - len(data))
         data += response
 
+        d2 = self.receive(ipd=ipd, timeout=0.1)
+        if d2 and d2['data'] is not None:
+            data += d2['data']
+
         d['data'] = data
         return d
 
@@ -554,10 +579,8 @@ class Esp8266:
             if check_end_func is None:
                 if line_decoded == "OK\r\n" or line_decoded == "ERROR\r\n":
                     break
-            else:
-                check = check_end_func(lines)
-                if check is True:
-                    break
+            elif check_end_func(lines):
+                break
         return lines
 
     @staticmethod
