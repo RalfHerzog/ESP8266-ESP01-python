@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import logging
+import os
 import re
 import time
 from enum import Enum
@@ -797,7 +798,7 @@ if __name__ == "__main__":
         exit(-1)
 
     esp8266.mode(WifiMode.CLIENT)
-    if not esp8266.join('SSID', 'MySecureWifiPassword'):
+    if not esp8266.join(os.getenv('WIFI_SSID', 'SSID'), os.getenv('WIFI_PASSWORD', 'MySecureWifiPassword')):
         exit(-1)
 
     # Try to connect to remote server
