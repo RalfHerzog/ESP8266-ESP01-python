@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import re
+import os
 import time
 import ulogger
 
@@ -768,7 +769,7 @@ if __name__ == "__main__":
     # print(esp8266.version())
     # print(esp8266.mode(WifiMode.CLIENT))
     # print(esp8266.join())
-    # print(esp8266.join('SSID at home', 'MySecurePassword'))
+    # print(esp8266.join(os.getenv('WIFI_SSID', 'SSID'), os.getenv('WIFI_PASSWORD', 'MySecureWifiPassword'))
 
     # print(esp8266.serve(DummyHTTPServer(port=80)))
     # print(esp8266.serve(DummyTCP(port=333)))
