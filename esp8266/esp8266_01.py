@@ -95,7 +95,7 @@ class WifiClient:
 
 
 class Esp8266:
-    def __init__(self, read_func, send_func, readline_func, timeout_func=None, log_level=ulogger.DEBUG):
+    def __init__(self, read_func, send_func, readline_func, timeout_func=None, log_level=0):
         self.read_func = read_func
         self.send_func = send_func
         self.readline_func = readline_func
@@ -423,7 +423,7 @@ class Esp8266:
         regex = r'\+IPD,(\d+)(,\d+)?:'
         match = re.search(regex, line)
         if match is None:
-            raise RuntimeError(f'regex mismatch "{line}"')
+            return False
         n_groups = len(match.groups())
         d = {}
         if n_groups == 3:
@@ -432,18 +432,71 @@ class Esp8266:
         else:
             length = d['length'] = int(match.group(1))
         pos = match.span()[1]
-        data = line[pos:].encode('ASCII')
+        # data = line[pos:].encode("unicode_escape")
+        # data = line[pos:].encode("ASCII")
+        data = line[pos:].encode('unicode_escape')
+        # TODO Remove me
+        self.logger.info(f'start ({len(data)}): {data}')
+        self.logger.info(f'<= Received {len(data)} of {length} bytes (start)')
 
         # response = self.read_lines(check_end_func=lambda lines: len(data) + len(''.join(lines)) >= length)
-        response = self._read_raw(length - len(data))
-        data += response
+        remaining_length = length - len(data)
+        t = time.time()
+        while remaining_length > 0:
+            # TODO Remove me
+            self.logger.info(f'remaining_length {remaining_length}')
+            response = self._read_raw(remaining_length)
+            self.logger.info(f'<= Received {len(response)} bytes (continuing)')
+            if len(response) == 0 and time.time() - t > timeout:
+                break
+            # TODO Remove me
+            self.logger.info(f'continuing ({len(response)}): {response}')
+            remaining_length -= len(response)
+            data += response
 
-        d2 = self.receive(ipd=ipd, timeout=0.1)
+        if remaining_length != 0:
+            self.logger.info(f'Remaining data not received: {remaining_length} bytes')
+
+        d2 = self.receive(ipd=ipd, timeout=1)
         if d2 and d2['data'] is not None:
             data += d2['data']
 
         d['data'] = data
         return d
+
+    def _read_raw(self, size: int, timeout: float = 0.5):
+        if self.timeout_func is not None:
+            self.timeout_func(timeout)
+        data = []
+        t = time.time()
+        while size > 0:
+            chunk = self.read_func(size)
+            if chunk is None:
+                if size > 0 and self.timeout_func is None and (time.time() - t) > timeout:
+                    self.logger.warn(f'Timeout waiting for reply')
+                    break
+                continue
+            # https://stackoverflow.com/a/31213916
+            # encoded_chunk = self.__bytes_escape(chunk)
+            size -= len(chunk)
+            data.append(chunk)
+        return ''.join([d.decode() for d in data]).encode()
+
+    @staticmethod
+    def __bytes_escape(b):
+        return b \
+            .decode('string_escape') \
+            .replace('\\', '\\\\') \
+            .replace('\'', '\\\'') \
+            .replace('\"', '\\"') \
+            .replace('\a', '\\a') \
+            .replace('\b', '\\b') \
+            .replace('\f', '\\f') \
+            .replace('\n', '\\n') \
+            .replace('\r', '\\r') \
+            .replace('\t', '\\t') \
+            .replace('\v', '\\v') \
+            .encode('string_escape')
 
     def ip_close(self, ipd=None):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CIPCLOSE
@@ -541,22 +594,6 @@ class Esp8266:
             self.logger.error(f'Wrote only {n_bytes} of {len(data)} bytes')
             return n_bytes
         time.sleep(timeout)
-
-    def _read_raw(self, size: int, timeout: float = 0.5):
-        if self.timeout_func is not None:
-            self.timeout_func(timeout)
-        data = []
-        t = time.time()
-        while size > 0:
-            chunk = self.read_func(size)
-            if chunk is None:
-                if size > 0 and self.timeout_func is None and (time.time() - t) > timeout:
-                    self.logger.warn(f'Timeout waiting for reply')
-                    break
-                continue
-            size -= len(chunk)
-            data.append(chunk.decode('ASCII'))
-        return bytearray(''.join(data).encode('ASCII'))
 
     def read_lines(self, check_end_func=None, timeout: float = 20.0, log_timeout=True):
         if self.timeout_func is not None:
@@ -681,7 +718,7 @@ class Server:
             except RuntimeError:
                 continue
 
-            if d['length'] == -1:
+            if not d or d['length'] == -1:
                 self.logger.info(f'No data was sent after accepting connection')
             data: bytearray = d['data']
 
@@ -769,7 +806,7 @@ if __name__ == "__main__":
     # print(esp8266.version())
     # print(esp8266.mode(WifiMode.CLIENT))
     # print(esp8266.join())
-    # print(esp8266.join(os.getenv('WIFI_SSID', 'SSID'), os.getenv('WIFI_PASSWORD', 'MySecureWifiPassword'))
+    # print(esp8266.join(os.getenv('WIFI_SSID', 'SSID'), os.getenv('WIFI_PASSWORD', 'MySecureWifiPassword')))
 
     # print(esp8266.serve(DummyHTTPServer(port=80)))
     # print(esp8266.serve(DummyTCP(port=333)))
