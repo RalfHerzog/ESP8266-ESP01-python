@@ -100,6 +100,7 @@ class Esp8266:
         self.send_func = send_func
         self.readline_func = readline_func
         self.timeout_func = timeout_func
+        self.blocking = False
 
         self.logger = ulogger.Logger(self.__class__.__name__)
         self.logger.level = log_level
@@ -112,7 +113,7 @@ class Esp8266:
 
     def reset(self):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+RST
-        success = self.__success(self.execute('AT+RST', expect='ready\r\n'), custom_end='ready')
+        success = self.__success(self.execute('AT+RST', expect=b'ready\r\n'), custom_end=b'ready')
         # Dummy read. Sometimes there is more data sent
         self.execute('')
         return success
@@ -170,7 +171,7 @@ class Esp8266:
             if wifi_station and wifi_station.ssid == ssid:
                 return True
 
-            response = self.execute(f'AT+CWJAP="{ssid}","{password}"')
+            response = self.execute(f'AT+CWJAP="{ssid}","{password}"', sanitized_command=f'AT+CWJAP="{ssid}","XXXXXX"')
             retry = 1
             while retry <= retries and not self.__success(response):
                 self.logger.info(f'Retry to connect to wifi {retry}/{retries}')
@@ -372,13 +373,13 @@ class Esp8266:
     @staticmethod
     def _check_send(lines):
         for i, line in enumerate(lines):
-            if line == 'SEND OK\r\n':  # and len(lines) > i + 1 and lines[i + 1] == '\r\n':
+            if line == b'SEND OK\r\n':  # and len(lines) > i + 1 and lines[i + 1] == '\r\n':
                 return True
-            if line == 'SEND FAIL\r\n':
+            if line == b'SEND FAIL\r\n':
                 return False
         return None
 
-    def send(self, data=None, ipd=None):
+    def send(self, data=None, ipd=None, timeout: float = 0.0):
         # def send(self, length = None, i = None):
         # https://room-15.github.io/blog/2015/03/26/esp8266-at-command-reference/#AT+CIPSEND
         if data is None and ipd is None:
@@ -393,35 +394,46 @@ class Esp8266:
 
         self.logger.info(f'=> Write {length} bytes ...')
         if isinstance(data, str):
-            self._write(data)
+            n_bytes = self.write(data, timeout=timeout)
         elif isinstance(data, (bytes, bytearray)):
-            self._write_raw(data)
+            n_bytes = self.write_raw(data, timeout=timeout)
         else:
             raise RuntimeError(f'data type {type(data)} cannot be sent')
 
         lines = self.read_lines(check_end_func=Esp8266._check_send)
         return Esp8266._check_send(lines)
 
-    def receive(self, ipd=None, timeout=1.0):
+    def receive(self, ipd=None, timeout=1.0, log_timeout=True):
         if ipd is not None:
             response = self.read_lines(
                 timeout=timeout,
-                check_end_func=lambda lines: lines[-1].startswith(f'+IPD,{ipd},')
+                check_end_func=lambda lines: lines[-1].startswith(f'+IPD,{ipd},'.encode()),
+                log_timeout=log_timeout
             )
         else:
             response = self.read_lines(
                 timeout=timeout,
-                check_end_func=lambda lines: lines[-1].startswith('+IPD,')
+                check_end_func=lambda lines: lines[-1].startswith('+IPD,'.encode()),
+                log_timeout=log_timeout
             )
-        if len(response) == 0 or response[-1] == '+IPD,':
+        if len(response) == 0 or response[-1] == b'+IPD,':
             return {
                 'id': None,
                 'length': -1,
                 'data': None
             }
         line = response[-1]
-        regex = r'\+IPD,(\d+)(,\d+)?:'
-        match = re.search(regex, line)
+        if b':' not in line:
+            return {
+                'id': None,
+                'length': len(line),
+                'data': line
+            }
+        line, data = line.split(b':', 1)
+        header = line.decode()
+        regex = r'^\+IPD,(\d+)(,\d+)?'
+        match = re.search(regex, header)
+        self.logger.debug(f'Match result is {match} of {regex} against {line}')
         if match is None:
             return False
         n_groups = len(match.groups())
@@ -431,16 +443,17 @@ class Esp8266:
             length = d['length'] = int(match.group(2)[1:])
         else:
             length = d['length'] = int(match.group(1))
-        pos = match.span()[1]
+        # pos = match.span()[1]
         # data = line[pos:].encode("ASCII")
-        data = line[pos:].encode('unicode_escape')
+        # data = line[pos:].encode('unicode_escape')
         self.logger.info(f'<= Received {len(data)} of {length} bytes (start)')
 
         # response = self.read_lines(check_end_func=lambda lines: len(data) + len(''.join(lines)) >= length)
         remaining_length = length - len(data)
         t = time.time()
         while remaining_length > 0:
-            response = self._read_raw(remaining_length)
+            self.logger.info(f'remaining_length: {remaining_length}')
+            response = self.read_raw(remaining_length)
             self.logger.info(f'<= Received {len(response)} bytes (continuing)')
             if len(response) == 0 and time.time() - t > timeout:
                 break
@@ -450,22 +463,22 @@ class Esp8266:
         if remaining_length != 0:
             self.logger.info(f'Remaining data not received: {remaining_length} bytes')
 
-        d2 = self.receive(ipd=ipd, timeout=1)
+        d2 = self.receive(ipd=ipd, timeout=1, log_timeout=False)
         if d2 and d2['data'] is not None:
             data += d2['data']
 
         d['data'] = data
         return d
 
-    def _read_raw(self, size: int, timeout: float = 0.5):
+    def read_raw(self, size: int, timeout: float = 0.5):
         if self.timeout_func is not None:
             self.timeout_func(timeout)
         data = bytearray()
         t = time.time()
-        while size > 0:
+        while size > 0 or self.blocking:
             chunk = self.read_func(size)
             if chunk is None:
-                if size > 0 and self.timeout_func is None and (time.time() - t) > timeout:
+                if size > 0 and not self.blocking and self.timeout_func is None and (time.time() - t) > timeout:
                     self.logger.warn(f'Timeout waiting for reply')
                     break
                 continue
@@ -561,11 +574,11 @@ class Esp8266:
             raise RuntimeError(f'Server timeout cannot be negative')
         return self.__success(self.execute(f'AT+CIPSTO={seconds}'))
 
-    def execute(self, command: str, expect=None, payload_only=False):
-        self.logger.info(f'=> {command}')
+    def execute(self, command: str, expect=None, payload_only=False, sanitized_command=None):
+        self.logger.info(f'=> {sanitized_command or command}')
 
         if command != '':
-            self._write(command)
+            self.write(command)
         if expect is not None:
             resp_lines = self.read_lines(check_end_func=lambda lines: expect in lines)
         else:
@@ -573,14 +586,15 @@ class Esp8266:
         trimmed_resp_lines = self.__trim_lines(resp_lines)
         filtered_lines = self.__filter_lines(command, trimmed_resp_lines, payload_only=payload_only)
 
+        # TODO Change to debug again
         [self.logger.debug(f'<= {line}') for line in filtered_lines]
 
         return filtered_lines
 
-    def _write(self, text, timeout: float = 0.0):
-        self._write_raw(f"{text}\r\n".encode('ASCII'), timeout=timeout)
+    def write(self, text, timeout: float = 0.0):
+        return self.write_raw(f"{text}\r\n".encode('ASCII'), timeout=timeout)
 
-    def _write_raw(self, data: bytes, timeout: float = 0.0):
+    def write_raw(self, data: bytes, timeout: float = 0.0):
         n_bytes = self.send_func(data)
         if n_bytes is None:
             self.logger.warn(f'Timeout waiting for send data')
@@ -589,6 +603,7 @@ class Esp8266:
             self.logger.error(f'Wrote only {n_bytes} of {len(data)} bytes')
             return n_bytes
         time.sleep(timeout)
+        return n_bytes
 
     def read_lines(self, check_end_func=None, timeout: float = 20.0, log_timeout=True):
         if self.timeout_func is not None:
@@ -599,18 +614,13 @@ class Esp8266:
             line = self.readline_func()
             if len(line) == 0:
                 if self.timeout_func is None and (time.time() - t) > timeout:
-                    if log_timeout is not None:
+                    if log_timeout:
                         self.logger.warn(f'Timeout waiting for reply')
                     break
                 continue
-            try:
-                line_decoded = line.decode("ASCII")
-            except UnicodeError:
-                self.logger.error(f'Error decode: {line}')
-                continue
-            lines.append(line_decoded)
+            lines.append(line)
             if check_end_func is None:
-                if line_decoded == "OK\r\n" or line_decoded == "ERROR\r\n":
+                if line == b"OK\r\n" or line == b"ERROR\r\n":
                     break
             elif check_end_func(lines):
                 break
@@ -647,12 +657,15 @@ class Esp8266:
         if len(lines) == 0:
             self.logger.debug(f'Response validation returned [{False}]')
             return False
-        success = lines[len(lines) - 1] == 'OK' or (custom_end is not None and lines[len(lines) - 1] == custom_end)
+        success = lines[len(lines) - 1] == b'OK' or (custom_end is not None and lines[len(lines) - 1] == custom_end)
         self.logger.debug(f'Response validation returned [{success}]')
         return success
 
     def clear_buffer(self, timeout: float = 0.5):
         self.read_lines(timeout=timeout, log_timeout=False)
+
+    def set_blocking(self, blocking):
+        self.blocking = blocking
 
     def serve(self, server):
         if not isinstance(server.__class__, Server.__class__):
@@ -666,7 +679,7 @@ class Esp8266:
         regex = r'^(\d),(CONNECT|CLOSED)\r\n$'
         first_line, second_line = lines[0], lines[1]
         match = re.match(regex, first_line)
-        if match and second_line == '\r\n':
+        if match and second_line == b'\r\n':
             return True
         return False
 
