@@ -432,25 +432,18 @@ class Esp8266:
         else:
             length = d['length'] = int(match.group(1))
         pos = match.span()[1]
-        # data = line[pos:].encode("unicode_escape")
         # data = line[pos:].encode("ASCII")
         data = line[pos:].encode('unicode_escape')
-        # TODO Remove me
-        self.logger.info(f'start ({len(data)}): {data}')
         self.logger.info(f'<= Received {len(data)} of {length} bytes (start)')
 
         # response = self.read_lines(check_end_func=lambda lines: len(data) + len(''.join(lines)) >= length)
         remaining_length = length - len(data)
         t = time.time()
         while remaining_length > 0:
-            # TODO Remove me
-            self.logger.info(f'remaining_length {remaining_length}')
             response = self._read_raw(remaining_length)
             self.logger.info(f'<= Received {len(response)} bytes (continuing)')
             if len(response) == 0 and time.time() - t > timeout:
                 break
-            # TODO Remove me
-            self.logger.info(f'continuing ({len(response)}): {response}')
             remaining_length -= len(response)
             data += response
 
@@ -467,7 +460,7 @@ class Esp8266:
     def _read_raw(self, size: int, timeout: float = 0.5):
         if self.timeout_func is not None:
             self.timeout_func(timeout)
-        data = []
+        data = bytearray()
         t = time.time()
         while size > 0:
             chunk = self.read_func(size)
@@ -479,8 +472,10 @@ class Esp8266:
             # https://stackoverflow.com/a/31213916
             # encoded_chunk = self.__bytes_escape(chunk)
             size -= len(chunk)
-            data.append(chunk)
-        return ''.join([d.decode() for d in data]).encode()
+            [data.append(b) for b in chunk]
+            # data.append(chunk)
+        # return ''.join([d.decode('UTF-8') for d in data]).encode('UTF-8')
+        return data
 
     @staticmethod
     def __bytes_escape(b):
@@ -582,10 +577,10 @@ class Esp8266:
 
         return filtered_lines
 
-    def _write(self, text, timeout: float = 0.5):
+    def _write(self, text, timeout: float = 0.0):
         self._write_raw(f"{text}\r\n".encode('ASCII'), timeout=timeout)
 
-    def _write_raw(self, data: bytes, timeout: float = 0.5):
+    def _write_raw(self, data: bytes, timeout: float = 0.0):
         n_bytes = self.send_func(data)
         if n_bytes is None:
             self.logger.warn(f'Timeout waiting for send data')
