@@ -360,10 +360,10 @@ class Esp8266:
         if t and address and port:
             if ipd is None:
                 # Single connection
-                response = self.execute(f'AT+CIPSTART="{t}","{address}",{port}')
+                response = self.execute(f'AT+CIPSTART="{t}","{address}",{port}', timeout=20)
             else:
                 # Multiplex connection
-                response = self.execute(f'AT+CIPSTART={ipd},"{t}","{address}",{port}')
+                response = self.execute(f'AT+CIPSTART={ipd},"{t}","{address}",{port}', timeout=20)
             if not self.__success(response) and len(response) > 0 and response[0] != 'ALREADY CONNECTED':
                 return False
             return True
@@ -574,15 +574,15 @@ class Esp8266:
             raise RuntimeError(f'Server timeout cannot be negative')
         return self.__success(self.execute(f'AT+CIPSTO={seconds}'))
 
-    def execute(self, command: str, expect=None, payload_only=False, sanitized_command=None):
+    def execute(self, command: str, expect=None, payload_only=False, sanitized_command=None, timeout=20):
         self.logger.info(f'=> {sanitized_command or command}')
 
         if command != '':
             self.write(command)
         if expect is not None:
-            resp_lines = self.read_lines(check_end_func=lambda lines: expect in lines)
+            resp_lines = self.read_lines(check_end_func=lambda lines: expect in lines, timeout=timeout)
         else:
-            resp_lines = self.read_lines()
+            resp_lines = self.read_lines(timeout=timeout)
         trimmed_resp_lines = self.__trim_lines(resp_lines)
         filtered_lines = self.__filter_lines(command, trimmed_resp_lines, payload_only=payload_only)
 
